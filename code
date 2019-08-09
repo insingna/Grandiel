@@ -1,0 +1,109 @@
+import aiohttp
+import asyncio
+import async_timeout
+from bs4 import BeautifulSoup
+import discord
+from discord.ext import commands
+import parsedatetime
+import pytz
+from tzlocal import get_localzone
+from datetime import datetime
+import html
+import logging
+import json
+import re
+def is_dm_or_manage_channel():
+    async def predicate(ctx):
+        msg = ctx.message
+        ch = msg.channel
+        permissions = ch.permissions_for(msg.author)
+        return permissions.manage_channels and ctx.guild is not None
+    return commands.check(predicate)
+class AnnounceCog:
+
+    URLS = ['https://www.plug.game/grandchaseofficial/1031566/posts?menuId=1',   # Patch Notes        
+
+    def __init__(self, bot):
+        self.bot = bot
+@@ -122,11 +117,14 @@ def __init__(self, bot):
+                                chan = self.bot.get_channel(int(key))
+                                # be extra sure we can post
+                                if isinstance(chan, discord.abc.GuildChannel):
+                                    logging.info("attempting to send to channel " + key)
+                                    logging.info(
+                                        "attempting to send to channel " + key)
+                                    await chan.send(embed=embed)
+                                    logging.info("successfully sent to #" + chan.name + " on " + chan.guild.name + " owned by @" + chan.guild.owner.name)
+                                    logging.info("successfully sent to #" + chan.name + " on " +
+                                                 chan.guild.name + " owned by @" + chan.guild.owner.name)
+                                else:
+                                    logging.warning(key + " is invalid, removing")
+                                    logging.warning(
+                                        key + " is invalid, removing")
+                                    self.channels[key] = False
+                                    self.write_channels()
+        except FileNotFoundError:  # don't flood the channel on first run, instead, just get a list of posts
+            with open(path, 'a') as f:
+                for id_ in ids:
+                    f.write(str(id_) + '\n')
+        except Exception as e:
+            raise(e)
+    def get_embed(self, dic):
+        if dic:
+            embed = discord.Embed(title=dic['title'],
+                                  description=dic['description'],
+                                  url=dic['url'],
+                                  timestamp=dic['timestamp'])
+            embed.set_author(name=dic['author']['name'],
+                             url=dic['author']['url'],
+                             icon_url=dic['author']['icon_url'])
+            if 'thumbnail' in dic:
+                embed.set_thumbnail(url=dic['thumbnail']['url'])
+            return embed
+        else:
+            return discord.Embed(title='No Articles')
+    def process_pages(self, pages):
+        ids = []
+        attributes = {}
+        for i, page in enumerate(pages):
+            soup = BeautifulSoup(page, 'html.parser')
+            contents = soup.find_all(class_='frame_plug')
+            # get a list of article-ids
+            ids += [int(content.attrs['data-articleid']) for content in contents]
+            ids += [int(content.attrs['data-articleid'])
+                    for content in contents]
+            # get a dictionary of attributes of every forum post in the page
+            for content in contents:
+                post = {
+                    'title': re.sub('\s+', ' ', html.unescape(content.find(class_='tit_feed').string)).strip(),
+                    'description': re.sub('\s+', ' ', html.unescape(content.find(class_='txt_feed').string)).strip(),
+                    'url': 'https://www.plug.game/kingsraid/1030449/posts/' + content.attrs['data-articleid'],
+                    'timestamp': self.get_time(content.find_all(class_='time')[1].string),
+                    'author': {
+                        'name': re.sub('\s+', ' ', content.find(class_='name').string).strip(),
+                        'url': 'https://plug.game' + content.find(class_='name').attrs['href'],
+                        'icon_url': content.find(class_='thumb').attrs['src']
+                    }
+                }
+                if content.find_all(class_='img'):
+                    post['thumbnail'] = {'url': content.find(class_='img').attrs['style'][21:-1]}
+                    post['thumbnail'] = {'url': content.find(
+                        class_='img').attrs['style'][21:-1]}
+                attributes[content.attrs['data-articleid']] = post
+        ids.sort()
+        return ids, attributes
+    def get_time(self, time_str):
+        # parsedatetime NLP does not understand min/hr
+        time_str = time_str.replace('min', 'minute').replace('hr', 'hour')
+        cal = parsedatetime.Calendar()
+        # I honestly don't care if it can't parse the time correctly, it will just output current time
+        dt = datetime(*cal.parse(time_str)[0][:6])
+        return dt.replace(tzinfo=get_localzone()).astimezone(tz=pytz.utc)
+    def write_channels(self):
+        with open(self.channel_path, 'w') as json_data:
+            json_data.write(json.dumps(self.channels))
+    # make a file every time we scrape, if the file does not exist, we have failed somehow and the container restarts
+    def announce_health(self):
+        open(self.health_path, 'a').close()
+def setup(bot):
+    bot.add_cog(AnnounceCog(bot))
